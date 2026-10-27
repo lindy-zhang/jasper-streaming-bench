@@ -1,0 +1,6 @@
+data/
+results/
+tests/tmp/
+__pycache__/
+*.nsys-rep
+*.ncu-rep
