@@ -1,0 +1,3 @@
+batch,step,batch_size,build_util_samples,build_gpu_util_mean,build_gpu_util_max,build_mem_util_mean,build_s,build_vps,inserted_total,n_live,jasper_n_live,jasper_n_tombstoned,gpu_mem_used_gb,eval,recall@10_bw64,qps_bw64,search_gpu_util_mean_bw64,recall@10_bw100,qps_bw100,search_gpu_util_mean_bw100,recall@10_bw128,qps_bw128,search_gpu_util_mean_bw128,append_util_samples,append_s,append_vps
+0,build,499950,50,51.1,99,23.9,1.0,499715.6,499950,499950,499950,0,5.48,after build,0.4981,571551.0,,0.5519,397561.9,49.0,0.5803,329774.1,49.0,,,
+1,insert_only,5050,,,,,,,505000,505000,505000,0,5.48,batch 1,0.4992,562674.2,,0.5528,400887.9,,0.5815,324788.2,50.0,0,0.0162,312365.6

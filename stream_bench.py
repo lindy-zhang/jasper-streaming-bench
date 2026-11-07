@@ -185,6 +185,8 @@ def compile_runbook(args, n_total):
                  + ", ".join(k for k in book))
     rb = book[args.runbook_dataset]
     ops = [rb[k] for k in sorted(k for k in rb if isinstance(k, int))]
+    if rb.get("type") == "bigann" or any(o["operation"] == "insert" for o in ops):
+        return compile_bigann_runbook(args, ops, n_total)
 
     # Count insert batches first, to pick an evaluation interval.
     total_batches = 0
@@ -241,6 +243,72 @@ def compile_runbook(args, n_total):
                    "n_initial": len(steps[0][1])}
 
 
+def compile_bigann_runbook(args, ops, n_total):
+    """BigANN / CONDA-style runbook (insert, delete, search over [start, end) row ranges),
+    e.g. CONDA's sliding_window_runbook.yaml and expiration_runbook.yaml.
+    Jasper needs a non-empty graph to start, so the first insert op is the initial build.
+    Each later insert op is one batch, or several of --insert-batch rows each."""
+    steps, b, built = [], 0, False
+    for op in ops:
+        name = op["operation"]
+        if name in IGNORED_OPS:
+            continue
+        if name == "insert":
+            rows = np.arange(op["start"], op["end"])
+            if not built:
+                steps += [("build", rows), ("eval", "after build")]
+                built = True
+                continue
+            bs = args.insert_batch or len(rows)
+            for s in range(0, len(rows), bs):
+                if args.max_batches and b >= args.max_batches:
+                    break
+                b += 1
+                steps.append(("insert", rows[s:s + bs], {"op": "insert", "event_rate": None}))
+                if args.consolidate_every and b % args.consolidate_every == 0:
+                    steps.append(("consolidate",))
+        elif name == "delete":
+            if not built:
+                sys.exit("runbook deletes before anything is inserted")
+            steps.append(("delete", np.arange(op["start"], op["end"]), True))
+            if args.consolidate_every:
+                steps.append(("consolidate",))
+        elif name == "search":
+            if built:
+                steps.append(("eval", f"search {sum(1 for s in steps if s[0] == 'eval')}"))
+        else:
+            sys.exit(f"runbook operation '{name}' is not supported by this harness")
+    need = max(int(s[1].max()) for s in steps if s[0] in ("build", "insert")) + 1
+    if need > n_total:
+        sys.exit(f"runbook needs {need} vectors but the base file has {n_total}")
+    return steps, {"runbook_ops": [o["operation"] for o in ops], "n_batches": b,
+                   "n_initial": len(steps[0][1])}
+
+
+def mips_to_l2(base, queries, pad_to=16):
+    """Turn maximum-inner-product search into L2 search (Bachrach et al. 2014; DiskANN's MIPS mode).
+    Base x -> [x, sqrt(M^2 - |x|^2)], query q -> [q, 0], with M = the largest base norm. Then
+    |q' - x'|^2 = |q|^2 + M^2 - 2 q.x, so the L2 order equals the inner-product order (largest first).
+    Jasper's ip mode does not work with Vamana's alpha-pruning (negative 'distances'), so use this instead.
+    Extra zero columns pad the dimension to a multiple of pad_to; they change no distances."""
+    bn = base.float().norm(dim=1)
+    m = float(bn.max()) * 1.0001
+    extra = torch.sqrt(torch.clamp(m * m - bn * bn, min=0.0))
+    d = base.shape[1] + 1
+    dp = -(-d // pad_to) * pad_to
+    b2 = torch.zeros(base.shape[0], dp, dtype=base.dtype)
+    b2[:, : base.shape[1]] = base
+    b2[:, base.shape[1]] = extra.to(base.dtype)
+    # Scaling a query never changes its inner-product ranking; scaling every query to norm M makes the
+    # q.x term large next to float16 rounding of the extra column, so the L2 order stays faithful.
+    qf = queries.float()
+    qf = qf * (m / qf.norm(dim=1, keepdim=True).clamp(min=1e-12))
+    q2 = torch.zeros(queries.shape[0], dp, dtype=queries.dtype)
+    q2[:, : queries.shape[1]] = qf.to(queries.dtype)
+    print(f"[mips->l2] max base norm {m:.3f}; dim {base.shape[1]} -> {dp}", flush=True)
+    return b2, q2
+
+
 # ----------------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------------
@@ -283,12 +351,16 @@ def parse_args():
     # index
     p.add_argument("--n-neighbors", type=int, default=64, choices=[8, 16, 32, 64], help="Max degree R")
     p.add_argument("--distance", default="l2", choices=["l2", "ip"])
+    p.add_argument("--mips-to-l2", action="store_true",
+                   help="Inner-product data: transform to L2 (exact same ranking) instead of using Jasper ip mode")
     p.add_argument("--alpha", type=float, default=1.2)
     p.add_argument("--workspace-budget", default="10GB")
     # built-in pattern workload
     p.add_argument("--pattern", default="insert_only",
                    choices=["insert_only", "sliding_window", "random_delete", "batch_tail_delete"])
     p.add_argument("--order", default="file", choices=["file", "shuffle"], help="Insertion order")
+    p.add_argument("--insert-batch", type=int, default=0,
+                   help="BigANN runbooks: split each insert op into batches of this many rows (0 = whole op)")
     p.add_argument("--init-frac", type=float, default=0.5, help="Fraction of vectors in the initial build")
     p.add_argument("--batch-size", type=int, default=10000)
     p.add_argument("--window", type=int, default=0, help="Live size for sliding_window (0 = initial size)")
@@ -332,6 +404,10 @@ def main():
     vectors = jasper.read_bin(args.base, args.dtype, max_vectors=args.max_vectors)  # CPU float16
     n_total, dim = vectors.shape
     queries_cpu = jasper.read_bin(args.queries, args.dtype)[: args.n_queries].contiguous()
+    if args.mips_to_l2:
+        vectors, queries_cpu = mips_to_l2(vectors, queries_cpu)
+        n_total, dim = vectors.shape
+        args.distance = "l2"
     queries = queries_cpu.to(dev)
     print(f"[data] {n_total} base vectors, dim {dim}, {queries.shape[0]} queries", flush=True)
 

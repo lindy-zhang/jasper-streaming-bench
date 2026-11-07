@@ -275,3 +275,15 @@ If `ncu` reports `ERR_NVGPUCTRPERM`, it needs permission to read GPU counters; a
 - Host-to-GPU copies of each batch are excluded from `append_s`.
 - Updates and searches run one after another, never concurrently.
 - CANDOR's noise and drop scenarios, stress tests and concurrent mode are not reproduced.
+
+## 12. CONDA / BigANN runbooks (Wikipedia-1M SW and EX)
+
+`stream_bench.py` also reads BigANN-style runbooks (`insert` / `delete` / `search` over row ranges),
+the format used by CONDA (PVLDB'26, https://github.com/darae-lee/CONDA). The first insert op becomes
+Jasper's initial build; each later insert op is one batch (`--insert-batch N` splits it).
+
+    bash run_wiki.sh        # downloads Wikipedia-1M (3 GB) + CONDA runbooks, runs SW and EX
+
+Settings match the CONDA paper where Jasper allows: inner product, R=32, alpha=1.2, 5K queries,
+consolidate after every delete op. `tools/plot_timesteps.py` plots Recall@10 and update latency
+per timestep, like the paper's figures.

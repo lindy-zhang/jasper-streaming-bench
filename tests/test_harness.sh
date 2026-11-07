@@ -49,4 +49,13 @@ for spec in "batch_insert:20000" "batch_insert_delete:18100" "bulk_delete:18000"
     --consolidate-every 50 --out "$out" > "${out%.csv}.log" 2>&1
   check "$out" "runbook $name" "$expect"
 done
+echo "BigANN/CONDA runbooks (Wikipedia SW/EX, scaled x0.02: 20K vectors)"
+for spec in "bigann_sw:10000" "bigann_ex:8000"; do
+  name=${spec%%:*}; expect=${spec##*:}
+  out="tests/tmp/runbook_${name}.csv"
+  python3 stream_bench.py --mock --device cpu --base tests/tmp/base.bin --queries tests/tmp/query.bin \
+    --n-queries 50 --runbook "tests/runbooks/${name}.yaml" --runbook-dataset test \
+    --consolidate-every 1 --out "$out" > "${out%.csv}.log" 2>&1
+  check "$out" "runbook $name" "$expect"
+done
 echo "all tests passed"
