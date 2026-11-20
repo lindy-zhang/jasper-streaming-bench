@@ -14,14 +14,14 @@ import sys
 R = sys.argv[1] if len(sys.argv) > 1 else "topology/results"
 rows = list(csv.DictReader(open(os.path.join(R, "fingerprints.csv"))))
 f = lambda r, k: float(r[k]) if r.get(k) not in (None, "") else float("nan")
-rows.sort(key=lambda r: f(r, "lid_query"))
+rows.sort(key=lambda r: f(r, "lid_query_median"))
 
-cols = [("dataset", "{:<14}"), ("kind", "{:<9}"), ("dim", "{:>4}"), ("lid_query", "{:>6.1f}"),
+cols = [("dataset", "{:<14}"), ("kind", "{:<9}"), ("dim", "{:>4}"), ("lid_query_median", "{:>6.1f}"),
         ("lid_base", "{:>6.1f}"), ("rc_query", "{:>6.2f}"), ("query_shift", "{:>6.2f}"),
         ("hub_skew", "{:>6.2f}"), ("antihub_frac", "{:>6.3f}"), ("pca90_frac", "{:>6.2f}"),
         ("km_var100", "{:>6.2f}"), ("km_sep100", "{:>6.2f}"), ("drift_locality", "{:>6.2f}"), ("dup_frac", "{:>6.3f}"),
         ("norm_cv", "{:>6.3f}")]
-short = {"lid_query": "LIDq", "lid_base": "LIDb", "rc_query": "RC", "query_shift": "qshift",
+short = {"lid_query_median": "LIDq", "lid_query": "LIDq_mean", "lid_base": "LIDb", "rc_query": "RC", "query_shift": "qshift",
          "hub_skew": "hub", "antihub_frac": "anti", "pca90_frac": "pca90", "km_var100": "km100",
          "km_sep100": "sep", "drift_locality": "drift", "norm_cv": "normCV", "dup_frac": "dups"}
 print(" ".join(f"{short.get(c, c):>6}" if c not in ("dataset", "kind") else fmt.format(c) for c, fmt in cols))
@@ -38,9 +38,9 @@ if os.path.exists(rp):
     recall = {r["dataset"]: float(r["recall"]) for r in csv.DictReader(open(rp))}
 
 colors = {"real": "#1F4E8C", "synthetic": "#DD8452", "reordered": "#55A868"}
-pairs = [("lid_query", "rc_query"), ("lid_query", "hub_skew"), ("km_var100", "drift_locality")]
+pairs = [("lid_query_median", "rc_query"), ("query_shift", "rc_query"), ("km_var100", "drift_locality")]
 if recall:
-    pairs = [("lid_query", "recall"), ("rc_query", "recall"), ("hub_skew", "recall")] + pairs
+    pairs = [("lid_query_median", "recall"), ("rc_query", "recall"), ("hub_skew", "recall")] + pairs
 fig, axes = plt.subplots(1, len(pairs), figsize=(4.4 * len(pairs), 3.8))
 for ax, (xk, yk) in zip(axes, pairs):
     for r in rows:
@@ -55,7 +55,7 @@ axes[0].legend(handles=handles, fontsize=7)
 fig.tight_layout(); fig.savefig(os.path.join(R, "metrics_scatter.png"), dpi=150)
 print(f"saved {R}/metrics_scatter.png")
 
-imgs = sorted(glob.glob(os.path.join(R, "embed_*.png")))
+imgs = sorted(p for p in glob.glob(os.path.join(R, "embed_*.png")) if not p.endswith("embed_grid.png"))
 if imgs:
     cols_n = 4
     fig, axes = plt.subplots((len(imgs) + cols_n - 1) // cols_n, cols_n, figsize=(4 * cols_n, 3.6 * ((len(imgs) + cols_n - 1) // cols_n)))
